@@ -1,29 +1,17 @@
-FROM pytorch/pytorch:2.8.0-cuda12.8-cudnn9-runtime
+FROM runpod/worker-comfyui:5.3.0-base-cuda12.8.1
 
 ENV PYTHONUNBUFFERED=1 \
-    HF_HOME=/workspace/.cache/huggingface \
-    TRANSFORMERS_CACHE=/workspace/.cache/huggingface \
-    PIP_NO_CACHE_DIR=1
+    PIP_NO_CACHE_DIR=1 \
+    OUTPUT_DIR=/workspace/outputs \
+    COMFYUI_URL=http://127.0.0.1:8188
 
-WORKDIR /app
+WORKDIR /
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git \
-    ffmpeg \
-    wget \
-    unzip \
-    libgl1 \
-    libglib2.0-0 \
-    && rm -rf /var/lib/apt/lists/*
+COPY requirements.txt /tmp/formula-faith-requirements.txt
+RUN python -m pip install --no-cache-dir -r /tmp/formula-faith-requirements.txt
 
-COPY requirements.txt /app/requirements.txt
-RUN python -m pip install --upgrade pip && \
-    python -m pip install -r /app/requirements.txt
+COPY handler.py /handler.py
 
-COPY spaces.py /app/spaces.py
-COPY handler.py /app/handler.py
-COPY space_src /app/space_src
+RUN mkdir -p /workspace/outputs
 
-RUN mkdir -p /workspace/outputs /workspace/.cache/huggingface
-
-CMD ["python", "-u", "/app/handler.py"]
+CMD ["/start.sh"]

@@ -1,46 +1,113 @@
+import base64
+import json
+import mimetypes
 import os
-import shutil
-import sys
-import tempfile
+import time
 import uuid
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import urlencode
 
 import boto3
 import requests
 import runpod
-from PIL import Image
 
-APP_DIR = Path(__file__).resolve().parent
-SPACE_SRC = APP_DIR / "space_src"
+
+COMFYUI_URL = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/workspace/outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-sys.path.insert(0, str(SPACE_SRC))
-
-import app as space_app  # noqa: E402
 
 
-def _download_file(url: str, suffix: str = "") -> Path:
-    parsed = urlparse(url)
-    suffix = suffix or Path(parsed.path).suffix or ".bin"
-    target = Path(tempfile.mktemp(suffix=suffix))
-    with requests.get(url, stream=True, timeout=120) as response:
+def _decode_data_uri(value: str) -> tuple[bytes, str]:
+    if not value.startswith("data:") or ";base64," not in value:
+        raise ValueError("image must be a data URI")
+    header, payload = value.split(",", 1)
+    content_type = header.removeprefix("data:").split(";", 1)[0] or "application/octet-stream"
+    return base64.b64decode(payload), content_type
+
+
+def _upload_comfy_image(item: dict) -> str:
+    name = item.get("name") or f"input-{uuid.uuid4().hex}.png"
+    image = item.get("image")
+    if not image:
+        raise ValueError(f"image item {name} is missing image data")
+    content, content_type = _decode_data_uri(image)
+    files = {
+        "image": (name, content, content_type),
+    }
+    data = {
+        "overwrite": "true",
+        "type": "input",
+    }
+    response = requests.post(f"{COMFYUI_URL}/upload/image", files=files, data=data, timeout=120)
+    response.raise_for_status()
+    result = response.json()
+    return result.get("name") or name
+
+
+def _replace_placeholders(value, replacements: dict[str, str]):
+    if isinstance(value, dict):
+        return {key: _replace_placeholders(item, replacements) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_replace_placeholders(item, replacements) for item in value]
+    if isinstance(value, str):
+        result = value
+        for key, replacement in replacements.items():
+            result = result.replace("{{" + key + "}}", replacement)
+        return result
+    return value
+
+
+def _submit_workflow(workflow: dict) -> str:
+    client_id = str(uuid.uuid4())
+    response = requests.post(
+        f"{COMFYUI_URL}/prompt",
+        json={"prompt": workflow, "client_id": client_id},
+        timeout=120,
+    )
+    response.raise_for_status()
+    prompt_id = response.json().get("prompt_id")
+    if not prompt_id:
+        raise RuntimeError("ComfyUI did not return prompt_id")
+    return prompt_id
+
+
+def _wait_history(prompt_id: str, timeout_seconds: int, poll_seconds: int) -> dict:
+    deadline = time.monotonic() + timeout_seconds
+    last_history = {}
+    while time.monotonic() < deadline:
+        response = requests.get(f"{COMFYUI_URL}/history/{prompt_id}", timeout=60)
         response.raise_for_status()
-        with target.open("wb") as handle:
-            for chunk in response.iter_content(chunk_size=1024 * 1024):
-                if chunk:
-                    handle.write(chunk)
+        history = response.json()
+        last_history = history
+        if prompt_id in history:
+            return history[prompt_id]
+        time.sleep(poll_seconds)
+    raise TimeoutError(f"ComfyUI prompt did not finish within {timeout_seconds}s: {json.dumps(last_history)[:1000]}")
+
+
+def _iter_output_files(history: dict):
+    outputs = history.get("outputs") or {}
+    for node_output in outputs.values():
+        if not isinstance(node_output, dict):
+            continue
+        for group in ("gifs", "videos", "animated", "images"):
+            for file_item in node_output.get(group, []) or []:
+                if isinstance(file_item, dict) and file_item.get("filename"):
+                    yield group, file_item
+
+
+def _download_comfy_file(file_item: dict, target_dir: Path) -> Path:
+    params = {
+        "filename": file_item["filename"],
+        "type": file_item.get("type", "output"),
+        "subfolder": file_item.get("subfolder", ""),
+    }
+    response = requests.get(f"{COMFYUI_URL}/view?{urlencode(params)}", timeout=180)
+    response.raise_for_status()
+    suffix = Path(file_item["filename"]).suffix or mimetypes.guess_extension(response.headers.get("Content-Type", "")) or ".bin"
+    target = target_dir / f"{Path(file_item['filename']).stem}-{uuid.uuid4().hex[:8]}{suffix}"
+    target.write_bytes(response.content)
     return target
-
-
-def _load_image(value: str | None) -> Image.Image | None:
-    if not value:
-        return None
-    if value.startswith("http://") or value.startswith("https://"):
-        path = _download_file(value, ".jpg")
-    else:
-        path = Path(value)
-    return Image.open(path).convert("RGB")
 
 
 def _maybe_upload(path: Path, key_prefix: str) -> dict:
@@ -53,6 +120,7 @@ def _maybe_upload(path: Path, key_prefix: str) -> dict:
 
     region = os.getenv("S3_REGION", "auto")
     key = f"{key_prefix.rstrip('/')}/{path.name}"
+    content_type = mimetypes.guess_type(path.name)[0] or "application/octet-stream"
     client = boto3.client(
         "s3",
         endpoint_url=endpoint_url or None,
@@ -60,72 +128,80 @@ def _maybe_upload(path: Path, key_prefix: str) -> dict:
         aws_access_key_id=access_key,
         aws_secret_access_key=secret_key,
     )
-    client.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": "video/mp4"})
+    client.upload_file(str(path), bucket, key, ExtraArgs={"ContentType": content_type})
     public_base = os.getenv("S3_PUBLIC_BASE_URL", "").rstrip("/")
     url = f"{public_base}/{key}" if public_base else ""
     return {"url": url, "path": f"s3://{bucket}/{key}"}
 
 
+def _pick_primary_output(files: list[dict]) -> dict | None:
+    for item in files:
+        if item["type"].startswith("video/"):
+            return item
+    return files[0] if files else None
+
+
 def handler(job):
     data = job.get("input") or {}
-    job_id = job.get("id") or str(uuid.uuid4())
-    image = _load_image(data.get("input_image_url") or data.get("image_url"))
-    last_image = _load_image(data.get("last_image_url"))
+    workflow = data.get("workflow")
+    if not isinstance(workflow, dict):
+        return {"status": "failed", "error": "input.workflow must be a ComfyUI API workflow object"}
 
-    if image is None:
-        return {"status": "failed", "error": "input_image_url is required"}
+    try:
+        uploaded = {}
+        for image_item in data.get("images", []) or []:
+            uploaded_name = _upload_comfy_image(image_item)
+            uploaded[image_item.get("name") or uploaded_name] = uploaded_name
 
-    prompt = data.get("prompt") or "make this image come alive, cinematic motion, smooth animation"
-    negative_prompt = data.get("negative_prompt") or space_app.default_negative_prompt
-    seed = int(data.get("seed", 1007968632))
-    duration_seconds = float(data.get("duration_seconds", 3))
-    steps = int(data.get("steps", 4))
-    quality = int(data.get("quality", 5))
-    scheduler = data.get("scheduler", "UniPCMultistep")
-    frame_multiplier = int(data.get("frame_multiplier", space_app.FIXED_FPS))
-    guidance_scale = float(data.get("guidance_scale", 1))
-    guidance_scale_2 = float(data.get("guidance_scale_2", 1))
-    flow_shift = float(data.get("flow_shift", 3.0))
+        replacements = {
+            "INPUT_IMAGE": next(iter(uploaded.values()), ""),
+            "START_FRAME": next(iter(uploaded.values()), ""),
+        }
+        workflow = _replace_placeholders(workflow, replacements)
+        prompt_id = _submit_workflow(workflow)
+        history = _wait_history(
+            prompt_id,
+            int(data.get("timeout_seconds") or os.getenv("COMFYUI_TIMEOUT_SECONDS", "1800")),
+            int(data.get("poll_seconds") or os.getenv("COMFYUI_POLL_SECONDS", "2")),
+        )
 
-    _preview, video_path, used_seed = space_app.generate_video(
-        input_image=image,
-        last_image=last_image,
-        prompt=prompt,
-        steps=steps,
-        negative_prompt=negative_prompt,
-        duration_seconds=duration_seconds,
-        guidance_scale=guidance_scale,
-        guidance_scale_2=guidance_scale_2,
-        seed=seed,
-        randomize_seed=False,
-        quality=quality,
-        scheduler=scheduler,
-        flow_shift=flow_shift,
-        frame_multiplier=frame_multiplier,
-        video_component=False,
-    )
+        output_files = []
+        for group, file_item in _iter_output_files(history):
+            local_path = _download_comfy_file(file_item, OUTPUT_DIR)
+            persisted = _maybe_upload(local_path, data.get("output_key_prefix", "formula-faith/runpod/wan22"))
+            content_type = mimetypes.guess_type(local_path.name)[0] or (
+                "video/mp4" if group in {"gifs", "videos", "animated"} else "application/octet-stream"
+            )
+            output_files.append({
+                "type": content_type,
+                "url": persisted["url"],
+                "path": persisted["path"],
+                "filename": local_path.name,
+                "comfyui_group": group,
+            })
 
-    if not video_path:
-        return {"status": "failed", "error": "generation returned no video_path", "seed": used_seed}
+        primary = _pick_primary_output(output_files)
+        if not primary:
+            return {
+                "status": "failed",
+                "provider": "runpod",
+                "provider_model": "wan2.2-comfyui",
+                "prompt_id": prompt_id,
+                "error": "ComfyUI finished without downloadable outputs",
+                "history": history,
+            }
 
-    output_path = OUTPUT_DIR / f"wan22-{job_id}.mp4"
-    shutil.copyfile(video_path, output_path)
-    persisted = _maybe_upload(output_path, data.get("output_key_prefix", "formula-faith/runpod/wan22"))
-
-    return {
-        "status": "generated",
-        "provider": "runpod",
-        "provider_model": "wan2.2-i2v-lightning-hf-port",
-        "output": {
-            "type": "video/mp4",
-            "url": persisted["url"],
-            "path": persisted["path"],
-        },
-        "seed": used_seed,
-        "duration_seconds": duration_seconds,
-        "prompt": prompt,
-        "negative_prompt": negative_prompt,
-    }
+        return {
+            "status": "generated",
+            "provider": "runpod",
+            "provider_model": "wan2.2-comfyui",
+            "prompt_id": prompt_id,
+            "output": primary,
+            "outputs": output_files,
+            "metadata": data.get("metadata") or {},
+        }
+    except Exception as exc:
+        return {"status": "failed", "error": str(exc), "provider": "runpod", "provider_model": "wan2.2-comfyui"}
 
 
 runpod.serverless.start({"handler": handler})

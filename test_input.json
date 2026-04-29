@@ -1,15 +1,19 @@
 {
   "input": {
-    "input_image_url": "https://v3b.fal.media/files/b/0a981e3c/Yr5Xm2tYylalMEJk-RCgc.jpg",
-    "last_image_url": null,
-    "prompt": "subtle cinematic movement, warm lamplight, quiet night, open Bible, contemplative mood, slow breathing motion, gentle camera push",
-    "negative_prompt": "text, watermark, logo, horror, cartoon, blurry details, distorted hands, extra limbs",
-    "duration_seconds": 3,
-    "steps": 4,
-    "seed": 1007968632,
-    "quality": 5,
-    "scheduler": "UniPCMultistep",
-    "frame_multiplier": 16,
-    "output_key_prefix": "formula-faith/smoke/wan22"
+    "workflow": {
+      "formula_faith_note": "Replace with a real exported ComfyUI API workflow before running a real endpoint job.",
+      "expected_input_placeholder": "{{INPUT_IMAGE}}"
+    },
+    "images": [
+      {
+        "name": "start_frame.jpg",
+        "image": "data:image/jpeg;base64,REPLACE_WITH_BASE64_IMAGE"
+      }
+    ],
+    "output_key_prefix": "formula-faith/smoke/wan22",
+    "metadata": {
+      "video_slug": "2026-04-25-nighttime-anxiety-spiraling",
+      "segment_id": "M01-B01-opening-scripture"
+    }
   }
 }

@@ -9,8 +9,8 @@ on:
       - "Dockerfile"
       - "handler.py"
       - "requirements.txt"
-      - "spaces.py"
-      - "space_src/**"
+      - "README.md"
+      - "test_input.json"
       - ".github/workflows/build.yml"
 
 env:
