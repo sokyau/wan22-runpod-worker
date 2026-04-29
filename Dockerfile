@@ -1,4 +1,4 @@
-FROM runpod/worker-comfyui:5.3.0-base-cuda12.8.1
+FROM runpod/worker-comfyui:5.8.5-base
 
 ENV PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \

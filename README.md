@@ -11,9 +11,10 @@ tags:
 
 This is the production-direction Wan2.2 worker for Formula and Faith.
 
-It runs on RunPod Serverless with ComfyUI inside the container. It does not use
-Hugging Face Spaces as runtime and does not require `HF_TOKEN`, `HF_HOME`, or
-`TRANSFORMERS_CACHE` as endpoint variables.
+It extends `runpod/worker-comfyui:5.8.5-base` and runs on RunPod Serverless
+with ComfyUI inside the container. It does not use Hugging Face Spaces as
+runtime and does not require `HF_TOKEN`, `HF_HOME`, or `TRANSFORMERS_CACHE` as
+endpoint variables.
 
 ## Runtime Contract
 
