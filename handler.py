@@ -79,7 +79,8 @@ def _submit_workflow(workflow: dict) -> str:
         json={"prompt": workflow, "client_id": client_id},
         timeout=120,
     )
-    response.raise_for_status()
+    if response.status_code >= 400:
+        raise RuntimeError(f"ComfyUI /prompt HTTP {response.status_code}: {response.text[:4000]}")
     prompt_id = response.json().get("prompt_id")
     if not prompt_id:
         raise RuntimeError("ComfyUI did not return prompt_id")
