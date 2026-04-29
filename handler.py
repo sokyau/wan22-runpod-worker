@@ -17,6 +17,21 @@ OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/workspace/outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _wait_for_comfyui_ready(timeout_seconds: int = 300, poll_seconds: int = 2) -> None:
+    deadline = time.monotonic() + timeout_seconds
+    last_error = ""
+    while time.monotonic() < deadline:
+        try:
+            response = requests.get(f"{COMFYUI_URL}/system_stats", timeout=10)
+            if response.status_code < 500:
+                return
+            last_error = f"HTTP {response.status_code}: {response.text[:300]}"
+        except Exception as exc:
+            last_error = str(exc)
+        time.sleep(poll_seconds)
+    raise TimeoutError(f"ComfyUI did not become ready within {timeout_seconds}s: {last_error}")
+
+
 def _decode_data_uri(value: str) -> tuple[bytes, str]:
     if not value.startswith("data:") or ";base64," not in value:
         raise ValueError("image must be a data URI")
@@ -148,6 +163,11 @@ def handler(job):
         return {"status": "failed", "error": "input.workflow must be a ComfyUI API workflow object"}
 
     try:
+        _wait_for_comfyui_ready(
+            int(data.get("comfyui_ready_timeout_seconds") or os.getenv("COMFYUI_READY_TIMEOUT_SECONDS", "300")),
+            int(data.get("comfyui_ready_poll_seconds") or os.getenv("COMFYUI_READY_POLL_SECONDS", "2")),
+        )
+
         uploaded = {}
         for image_item in data.get("images", []) or []:
             uploaded_name = _upload_comfy_image(image_item)
