@@ -11,7 +11,10 @@ COPY requirements.txt /tmp/formula-faith-requirements.txt
 RUN python -m pip install --no-cache-dir -r /tmp/formula-faith-requirements.txt
 
 COPY handler.py /handler.py
+COPY start-formula-faith.sh /start-formula-faith.sh
 
-RUN mkdir -p /workspace/outputs
+RUN sed -i 's/\r$//' /start-formula-faith.sh \
+    && mkdir -p /workspace/outputs \
+    && chmod +x /start-formula-faith.sh
 
-CMD ["/start.sh"]
+CMD ["/start-formula-faith.sh"]

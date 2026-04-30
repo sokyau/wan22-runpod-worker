@@ -85,10 +85,15 @@ Optional:
 ```text
 OUTPUT_DIR=/workspace/outputs
 COMFYUI_URL=http://127.0.0.1:8188
+COMFYUI_ROOT=/workspace/ComfyUI
+COMFYUI_MODEL_ROOT=/workspace/ComfyUI/models
+MODEL_VOLUME_ROOT=/runpod-volume/ComfyUI/models
 COMFYUI_READY_TIMEOUT_SECONDS=300
 COMFYUI_READY_POLL_SECONDS=2
 COMFYUI_TIMEOUT_SECONDS=1800
 COMFYUI_POLL_SECONDS=2
+SKIP_MODEL_PREFLIGHT=false
+SKIP_NODE_PREFLIGHT=false
 ```
 
 ## VPS Hermes Env
@@ -106,6 +111,33 @@ Do not put `RUNPOD_API_KEY` into the RunPod endpoint.
 
 The endpoint image is a ComfyUI worker. Wan2.2 model files must be available to
 ComfyUI through the image or a RunPod Network Volume before real jobs run.
+
+On startup the image links model files from:
+
+```text
+/runpod-volume/ComfyUI/models/
+```
+
+into:
+
+```text
+/workspace/ComfyUI/models/
+```
+
+The handler then preflights required Wan2.2 model files before waiting on
+ComfyUI. If files are missing, the worker returns:
+
+```json
+{
+  "status": "failed",
+  "error": "missing_model_files",
+  "missing_model_files": []
+}
+```
+
+After ComfyUI is ready, the handler checks the submitted workflow's
+`class_type` values against `/object_info`. If custom nodes are missing, it
+returns `error: missing_comfyui_nodes` before submitting to `/prompt`.
 
 Validated real-smoke blocker:
 

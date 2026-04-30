@@ -13,8 +13,35 @@ import runpod
 
 
 COMFYUI_URL = os.getenv("COMFYUI_URL", "http://127.0.0.1:8188").rstrip("/")
+COMFYUI_ROOT = Path(os.getenv("COMFYUI_ROOT", "/workspace/ComfyUI"))
+COMFYUI_MODEL_ROOT = Path(os.getenv("COMFYUI_MODEL_ROOT", str(COMFYUI_ROOT / "models")))
 OUTPUT_DIR = Path(os.getenv("OUTPUT_DIR", "/workspace/outputs"))
 OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+
+REQUIRED_MODEL_FILES = [
+    "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
+    "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
+    "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
+    "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
+    "vae/wan_2.1_vae.safetensors",
+]
+
+
+def _is_truthy(value) -> bool:
+    if isinstance(value, bool):
+        return value
+    if value is None:
+        return False
+    return str(value).strip().lower() in {"1", "true", "yes", "y", "on"}
+
+
+def _missing_required_model_files() -> list[str]:
+    return [
+        str(COMFYUI_MODEL_ROOT / relative_path)
+        for relative_path in REQUIRED_MODEL_FILES
+        if not (COMFYUI_MODEL_ROOT / relative_path).is_file()
+    ]
 
 
 def _wait_for_comfyui_ready(timeout_seconds: int = 300, poll_seconds: int = 2) -> None:
@@ -85,6 +112,21 @@ def _submit_workflow(workflow: dict) -> str:
     if not prompt_id:
         raise RuntimeError("ComfyUI did not return prompt_id")
     return prompt_id
+
+
+def _workflow_node_types(workflow: dict) -> list[str]:
+    node_types = set()
+    for node in workflow.values():
+        if isinstance(node, dict) and isinstance(node.get("class_type"), str):
+            node_types.add(node["class_type"])
+    return sorted(node_types)
+
+
+def _missing_workflow_nodes(workflow: dict) -> list[str]:
+    response = requests.get(f"{COMFYUI_URL}/object_info", timeout=60)
+    response.raise_for_status()
+    available_nodes = set(response.json().keys())
+    return [node_type for node_type in _workflow_node_types(workflow) if node_type not in available_nodes]
 
 
 def _wait_history(prompt_id: str, timeout_seconds: int, poll_seconds: int) -> dict:
@@ -164,6 +206,18 @@ def handler(job):
         return {"status": "failed", "error": "input.workflow must be a ComfyUI API workflow object"}
 
     try:
+        if not _is_truthy(data.get("skip_model_preflight") or os.getenv("SKIP_MODEL_PREFLIGHT")):
+            missing_model_files = _missing_required_model_files()
+            if missing_model_files:
+                return {
+                    "status": "failed",
+                    "error": "missing_model_files",
+                    "provider": "runpod",
+                    "provider_model": "wan2.2-comfyui",
+                    "model_root": str(COMFYUI_MODEL_ROOT),
+                    "missing_model_files": missing_model_files,
+                }
+
         _wait_for_comfyui_ready(
             int(data.get("comfyui_ready_timeout_seconds") or os.getenv("COMFYUI_READY_TIMEOUT_SECONDS", "300")),
             int(data.get("comfyui_ready_poll_seconds") or os.getenv("COMFYUI_READY_POLL_SECONDS", "2")),
@@ -179,6 +233,18 @@ def handler(job):
             "START_FRAME": next(iter(uploaded.values()), ""),
         }
         workflow = _replace_placeholders(workflow, replacements)
+
+        if not _is_truthy(data.get("skip_node_preflight") or os.getenv("SKIP_NODE_PREFLIGHT")):
+            missing_nodes = _missing_workflow_nodes(workflow)
+            if missing_nodes:
+                return {
+                    "status": "failed",
+                    "error": "missing_comfyui_nodes",
+                    "provider": "runpod",
+                    "provider_model": "wan2.2-comfyui",
+                    "missing_nodes": missing_nodes,
+                }
+
         prompt_id = _submit_workflow(workflow)
         history = _wait_history(
             prompt_id,
