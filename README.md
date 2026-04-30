@@ -107,7 +107,30 @@ Do not put `RUNPOD_API_KEY` into the RunPod endpoint.
 The endpoint image is a ComfyUI worker. Wan2.2 model files must be available to
 ComfyUI through the image or a RunPod Network Volume before real jobs run.
 
-Do not rely on Hugging Face runtime downloads as the production path.
+Validated real-smoke blocker:
+
+```text
+ComfyUI /prompt HTTP 400: prompt_outputs_failed_validation
+unet_name not in []
+lora_name not in []
+clip_name not in []
+vae_name not in ['pixel_space']
+```
+
+Required Wan2.2 files for the current workflow:
+
+```text
+ComfyUI/models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors
+ComfyUI/models/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors
+ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors
+ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors
+ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
+ComfyUI/models/vae/wan_2.1_vae.safetensors
+```
+
+Do not rely on per-job Hugging Face runtime downloads as the production path.
+Use a Network Volume for a reusable model cache, or bake the model files into a
+dedicated image if cold-start speed is more important than image size and build time.
 
 ## Deploy Checklist
 
