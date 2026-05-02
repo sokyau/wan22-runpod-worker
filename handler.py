@@ -21,8 +21,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 REQUIRED_MODEL_FILES = [
     "diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors",
     "diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors",
-    "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors",
-    "loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors",
+    "loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors",
     "text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors",
     "vae/wan_2.1_vae.safetensors",
 ]

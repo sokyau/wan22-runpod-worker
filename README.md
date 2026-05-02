@@ -154,11 +154,14 @@ Required Wan2.2 files for the current workflow:
 ```text
 ComfyUI/models/diffusion_models/wan2.2_i2v_low_noise_14B_fp8_scaled.safetensors
 ComfyUI/models/diffusion_models/wan2.2_i2v_high_noise_14B_fp8_scaled.safetensors
-ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_low_noise.safetensors
-ComfyUI/models/loras/wan2.2_i2v_lightx2v_4steps_lora_v1_high_noise.safetensors
+ComfyUI/models/loras/lightx2v_I2V_14B_480p_cfg_step_distill_rank128_bf16.safetensors
 ComfyUI/models/text_encoders/umt5_xxl_fp8_e4m3fn_scaled.safetensors
 ComfyUI/models/vae/wan_2.1_vae.safetensors
 ```
+
+The workflow applies the same Lightx2v I2V rank128 LoRA to both the high-noise
+and low-noise Wan2.2 stages. Its balanced default is 12 total steps, split 6/6,
+CFG 1.5, sampler `lcm`, scheduler `simple`.
 
 Do not rely on per-job Hugging Face runtime downloads as the production path.
 Use a Network Volume for a reusable model cache, or bake the model files into a
